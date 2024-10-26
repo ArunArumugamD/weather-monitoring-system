@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Weather Monitoring System</title>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.1/moment.min.js"></script>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <style>
+        .weather-card {
+            transition: transform 0.2s;
+        }
+        .weather-card:hover {
+            transform: translateY(-5px);
+        }
+        .alert {
+            animation: fadeIn 0.5s;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+    </style>
+</head>
+<body class="bg-gray-100">
+    <div class="container mx-auto px-4 py-8">
+        <header class="mb-8">
+            <h1 class="text-4xl font-bold text-gray-800">Weather Monitoring System</h1>
+            <p class="text-gray-600">Real-time weather monitoring for major Indian cities</p>
+        </header>
+
+        <!-- Connection Status -->
+        <div class="bg-green-100 border-l-4 border-green-500 p-4 mb-8" id="connectionStatus">
+            <p class="text-green-700">🟢 Connected - Receiving real-time updates</p>
+        </div>
+
+        <!-- Cities Grid -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8" id="citiesGrid">
+            <!-- Weather cards will be inserted here -->
+        </div>
+
+        <!-- Charts Section -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+            <div class="bg-white p-6 rounded-lg shadow-md">
+                <h2 class="text-xl font-semibold mb-4">Temperature Trends</h2>
+                <div id="temperatureChart" class="h-[400px] w-full"></div>
+            </div>
+            <div class="bg-white p-6 rounded-lg shadow-md">
+                <h2 class="text-xl font-semibold mb-4">Weather Distribution</h2>
+                <div id="weatherDistribution" class="h-[400px] w-full"></div>
+            </div>
+        </div>
+
+        <!-- Weather Alerts -->
+        <div class="bg-white p-6 rounded-lg shadow-md mb-8">
+            <h2 class="text-xl font-semibold mb-4">Weather Alerts</h2>
+            <div id="alertsContainer" class="space-y-4">
+                <!-- Alerts will be inserted here -->
+            </div>
+        </div>
+
+        <!-- Daily Summaries -->
+        <div class="bg-white p-6 rounded-lg shadow-md">
+            <h2 class="text-xl font-semibold mb-4">Daily Summaries</h2>
+            <div class="overflow-x-auto">
+                <table class="min-w-full table-auto">
+                    <thead>
+                        <tr class="bg-gray-50">
+                            <th class="px-4 py-2 text-left">City</th>
+                            <th class="px-4 py-2 text-left">Avg Temp</th>
+                            <th class="px-4 py-2 text-left">Max Temp</th>
+                            <th class="px-4 py-2 text-left">Min Temp</th>
+                            <th class="px-4 py-2 text-left">Condition</th>
+                        </tr>
+                    </thead>
+                    <tbody id="summaryTableBody">
+                        <!-- Summary data will be inserted here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let ws;
+        let temperatureData = {};
+
+        function connectWebSocket() {
+            ws = new WebSocket(`ws://${window.location.host}/ws`);
+            
+            ws.onopen = function() {
+                console.log('WebSocket Connected');
+                document.getElementById('connectionStatus').classList.remove('hidden');
+            };
+            
+            ws.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                updateWeatherData(data);
+            };
+            
+            ws.onclose = function() {
+                console.log('WebSocket Disconnected');
+                document.getElementById('connectionStatus').classList.add('hidden');
+                setTimeout(connectWebSocket, 5000);
+            };
+
+            ws.onerror = function(err) {
+                console.error('WebSocket Error:', err);
+                document.getElementById('connectionStatus').classList.add('hidden');
+                ws.close();
+            };
+        }
+
+        async function fetchWeatherData() {
+            try {
+                const [weather, alerts, summaries] = await Promise.all([
+                    fetch('/api/current-weather').then(r => r.json()),
+                    fetch('/api/alerts').then(r => r.json()),
+                    fetch('/api/daily-summaries').then(r => r.json())
+                ]);
+
+                updateWeatherData(weather);
+                updateAlerts(alerts);
+                updateSummaries(summaries);
+            } catch (error) {
+                console.error('Error fetching data:', error);
+            }
+        }
+
+        function updateWeatherData(weather) {
+            const grid = document.getElementById('citiesGrid');
+            grid.innerHTML = weather.map(city => {
+                const cityName = city.name || city.city;
+
+                if (!temperatureData[cityName]) {
+                    temperatureData[cityName] = {
+                        temperatures: [],
+                        timestamps: []
+                    };
+                }
+
+                temperatureData[cityName].temperatures.push(city.temperature);
+                const currentTime = moment().format('HH:mm:ss');
+                temperatureData[cityName].timestamps.push(currentTime);
+
+                if (temperatureData[cityName].temperatures.length > 30) {
+                    temperatureData[cityName].temperatures = temperatureData[cityName].temperatures.slice(-30);
+                    temperatureData[cityName].timestamps = temperatureData[cityName].timestamps.slice(-30);
+                }
+
+                return `
+                    <div class="weather-card bg-white p-6 rounded-lg shadow-md hover:shadow-lg">
+                        <h3 class="text-2xl font-bold mb-2">${cityName}</h3>
+                        <div class="flex justify-between items-center">
+                            <div>
+                                <p class="text-4xl font-bold">${city.temperature.toFixed(1)}°C</p>
+                                <p class="text-gray-600">Feels like: ${city.feels_like.toFixed(1)}°C</p>
+                            </div>
+                            <div class="text-right">
+                                <p class="text-lg font-semibold">${city.weather_condition}</p>
+                                <p class="text-sm text-gray-500">${moment(city.recorded_at).fromNow()}</p>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            updateCharts();
+        }
+
+        function updateCharts() {
+            // Temperature trends chart
+            const traces = Object.entries(temperatureData).map(([city, data]) => ({
+                type: 'scatter',
+                mode: 'lines+markers',
+                name: city,
+                x: data.timestamps,
+                y: data.temperatures,
+                line: { width: 2, shape: 'spline' },
+                marker: { size: 6, symbol: 'circle' }
+            }));
+
+            const layout = {
+                height: 400,
+                margin: { l: 60, r: 180, t: 40, b: 60 },
+                xaxis: { 
+                    title: 'Time',
+                    tickangle: -45,
+                    showgrid: true
+                },
+                yaxis: { 
+                    title: 'Temperature (°C)',
+                    showgrid: true
+                },
+                legend: {
+                    x: 1.05,
+                    y: 1,
+                    xanchor: 'left',
+                    yanchor: 'top',
+                    bgcolor: 'rgba(255, 255, 255, 0.9)',
+                    bordercolor: '#E5E7EB',
+                    borderwidth: 1
+                },
+                showlegend: true,
+                hovermode: 'closest',
+                plot_bgcolor: '#fff',
+                paper_bgcolor: '#fff'
+            };
+
+            Plotly.newPlot('temperatureChart', traces, layout, {
+                responsive: true,
+                displayModeBar: false
+            });
+
+            // Weather distribution chart
+            const weatherCount = {};
+            Object.values(temperatureData).forEach(data => {
+                if (data.temperatures.length > 0) {
+                    const latestTemp = data.temperatures[data.temperatures.length - 1];
+                    const range = Math.floor(latestTemp / 5) * 5;
+                    const rangeKey = `${range}-${range + 5}°C`;
+                    weatherCount[rangeKey] = (weatherCount[rangeKey] || 0) + 1;
+                }
+            });
+
+            const distributionData = [{
+                values: Object.values(weatherCount),
+                labels: Object.keys(weatherCount),
+                type: 'pie',
+                textinfo: 'label+percent',
+                hoverinfo: 'label+value+percent',
+                textposition: 'outside',
+                hole: 0.4
+            }];
+
+            Plotly.newPlot('weatherDistribution', distributionData, {
+                height: 400,
+                margin: { l: 30, r: 30, t: 40, b: 30 },
+                showlegend: true
+            }, {
+                responsive: true,
+                displayModeBar: false
+            });
+        }
+
+        function updateAlerts(alerts) {
+            const container = document.getElementById('alertsContainer');
+            if (!alerts || alerts.length === 0) {
+                container.innerHTML = '<p class="text-gray-500">No active alerts</p>';
+                return;
+            }
+            container.innerHTML = alerts.map(alert => `
+                <div class="alert bg-red-50 border-l-4 border-red-500 p-4">
+                    <div class="flex">
+                        <div class="ml-3">
+                            <p class="text-red-700">${alert.city} - ${alert.message}</p>
+                            <p class="text-sm text-red-600">${moment(alert.created_at).fromNow()}</p>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function updateSummaries(summaries) {
+            const tbody = document.getElementById('summaryTableBody');
+            if (!summaries || summaries.length === 0) {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="5" class="px-4 py-2 text-center text-gray-500">
+                            No summaries available
+                        </td>
+                    </tr>`;
+                return;
+            }
+            tbody.innerHTML = summaries.map(summary => `
+                <tr class="hover:bg-gray-50">
+                    <td class="px-4 py-2 border">${summary.city}</td>
+                    <td class="px-4 py-2 border text-right">${summary.avg_temperature.toFixed(1)}°C</td>
+                    <td class="px-4 py-2 border text-right">${summary.max_temperature.toFixed(1)}°C</td>
+                    <td class="px-4 py-2 border text-right">${summary.min_temperature.toFixed(1)}°C</td>
+                    <td class="px-4 py-2 border">${summary.dominant_condition}</td>
+                </tr>
+            `).join('');
+        }
+
+        // Initialize application
+        document.addEventListener('DOMContentLoaded', function() {
+            connectWebSocket();
+            fetchWeatherData();
+            
+            // Regular polling as backup
+            setInterval(fetchWeatherData, 300000); // Every 5 minutes
+        });
+    </script>
+</body>
+</html>
